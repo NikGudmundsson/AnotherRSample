@@ -1,0 +1,365 @@
+---
+title: "ST 442 Final Project - Exploring the Dynamics of Flight Delays"
+author: "Nik Gudmundsson"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(ggplot2)
+library(caret)
+library(randomForest)
+```
+
+# Abstract
+
+# Introduction
+
+The airline and air freight businesses have established themselves as fast, efficient means of transporting people and cargo large distances. Air networks now connect every major city with even the most remote places in the world. The robustness of this network is contingent on its timeliness; passengers expect to reach their destination at an expected time and supplies traveling on cargo flights can have a very limited shelf life. A lack of timeliness can cause ripple impacts outside of the industry because plans were built around people and things being present. In the US alone, delays cost airlines an estimated \$8.3 billion and passengers \$18.1 billion during 2019 [1]. Lost revenue in lost demand and indirect costs such as lost productivity only add to that financial impact. Thus, it becomes important to understand the dynamics and relationships that result in delays. 
+
+Questions:
+- 
+
+# Methodology
+
+## Data Set
+The data set being used for this project is the US On-Time Reporting January 2023 data set. This data set contains information on every reported domestic flight that occurred within the US during the period of January 2023. A domestic flight is defined as a flight that takes off and lands in the same country (take off or landing location may be a permanent portion of the country or a territory). This data set contains 31 columns and 538837 observations. Columns include information on the flight itself including distance, origin, destination, flight number, and aircraft id and information on the delay of the flight leaving, arriving, and, when given, why that delay occurred. Each observation naturally corresponds with a single flight.
+
+```{r DataReading, include = FALSE}
+flights_jan2023 <- read.csv("T_ONTIME_REPORTING.csv")
+```
+
+A snippet of data set can be seen as follows:
+```{r DataPeek}
+#str(flights_jan2023)
+head(flights_jan2023, 3)
+```
+
+## Approach
+
+# Analysis and Results
+
+Some initial data modifications
+```{r}
+mod_jan_2023 <- flights_jan2023 |> 
+  filter(!is.na(DEP_DELAY) & !is.na(ARR_DELAY)) |>
+  mutate(CAR_FLIGHT_CODE = paste(OP_UNIQUE_CARRIER, OP_CARRIER_FL_NUM),
+         MOD_DEP_DELAY = if_else(DEP_DELAY < 0, 0, DEP_DELAY),
+         MOD_ARR_DELAY = if_else(ARR_DELAY < 0, 0, ARR_DELAY))
+
+mod_jan_2023
+```
+
+What does the distribution of delays look like?
+```{r}
+ggplot(data = mod_jan_2023, aes(x = MOD_DEP_DELAY)) +
+  geom_histogram(binwidth = 15, color = "#000080", drop = TRUE) +
+#  stat_bin(binwidth = 15, geom = "text", size = 2, 
+#           aes(y = after_stat(count), label = after_stat(count)), vjust = -0.5) + 
+  xlab("Departure Delay") +
+  ylab("Count") +
+  labs(title = "Histogram of Departure Delays with a Binwidth of 15 Minutes")
+```
+
+```{r}
+ggplot(data = mod_jan_2023 |> filter(MOD_DEP_DELAY > 0), aes(x = MOD_DEP_DELAY)) +
+  geom_histogram(binwidth = 15, color = "#000080", drop = TRUE) +
+  stat_bin(binwidth = 15, geom = "text", size = 2, 
+           aes(y = after_stat(count), label = after_stat(count)), vjust = -0.5) + 
+  xlab("Departure Delay") +
+  ylab("Count") +
+  labs(title = "Histogram of Departure Delays with a Binwidth of 15 Minutes Without a Delay of 0")
+```
+
+```{r}
+mean(mod_jan_2023$MOD_DEP_DELAY)
+sd(mod_jan_2023$MOD_DEP_DELAY)
+max(mod_jan_2023$MOD_DEP_DELAY)
+
+mean(mod_jan_2023$MOD_ARR_DELAY)
+sd(mod_jan_2023$MOD_ARR_DELAY)
+max(mod_jan_2023$MOD_ARR_DELAY)
+```
+
+
+```{r}
+ggplot(data = mod_jan_2023, aes(x = MOD_ARR_DELAY)) +
+  geom_histogram(binwidth = 15, color = "#000080", drop = TRUE) +
+  stat_bin(binwidth = 15, geom = "text", size = 2, 
+           aes(y = after_stat(count), label = after_stat(count)), vjust = -0.5) + 
+  xlab("Arrival Delay") +
+  ylab("Count") +
+  labs(title = "Histogram of Arrival Delays with a Binwidth of 15 Minutes")
+```
+
+
+This is a little hard to read due to the scaling and large number of outliers, perhaps a boxplot would display a little more easily?
+```{r}
+ggplot(data = mod_jan_2023, aes(x = MOD_DEP_DELAY)) +
+  geom_boxplot(color = "#000080")
+
+# Because of the large number of zeroes, anything even slightly above a zero gets identified as an outlier. So let's make an adjustment.
+
+ggplot(data = mod_jan_2023 |> filter(MOD_DEP_DELAY > 0), aes(x = MOD_DEP_DELAY)) +
+  geom_boxplot(color = "#000080")
+```
+
+Looking at the relationship between departure and arrival delay
+```{r}
+model <- lm(mod_jan_2023$MOD_ARR_DELAY ~ mod_jan_2023$MOD_DEP_DELAY)
+summary(model)
+```
+
+
+```{r}
+ggplot(data = mod_jan_2023, aes(x = MOD_DEP_DELAY, y = MOD_ARR_DELAY)) +
+  geom_point(color = "#000080") +
+  xlab("Departure Delay in Minutes") +
+  ylab("Arrival Delay in mInutes") +
+  labs(title = "Departure vs Arrival Delay") + 
+  geom_smooth(method = "lm") +
+  geom_text(x = 2000, y = 1500, label = "y = 0.9810x + 0.6847", size = 2)
+```
+
+
+Which airports tend to have the worst departure and arrival delays?
+```{r}
+delay_mod_jan_2023 <- mod_jan_2023 |> 
+  group_by(ORIGIN) |>
+  summarize(cum_dep_delay = sum(MOD_DEP_DELAY), 
+            n_flights = n(), 
+            avg_delay = cum_dep_delay / n_flights) |>
+  arrange(desc(avg_delay))
+```
+
+```{r}
+ggplot(data = delay_mod_jan_2023, aes(x = log10(n_flights), y = avg_delay)) + 
+  geom_point(color = "#000080") + 
+  xlab("Log(Number of Flights)") +
+  ylab("Average Flight Delay in Minutes") +
+  labs(title = "Log(Number of Flights) vs Average Flight Departure Delay in Minutes")
+```
+
+```{r}
+airline_delay <- mod_jan_2023 |> 
+  group_by(OP_UNIQUE_CARRIER) |>
+  summarize(cum_dep_delay = sum(MOD_DEP_DELAY), 
+            n_flights = n(), 
+            avg_delay = cum_dep_delay / n_flights,
+            std_delay = sd(MOD_DEP_DELAY)) |>
+  arrange(desc(avg_delay))
+
+name_df <- data.frame(Airline = c("Frontier", "Allegiant", "Spirit", "Jet Blue", "American", "SkyWest", "United",
+  "Delta", "Endeavor", "Southwest", "Envoy", "Hawaiian", "Alaska", "PSA", "Republic"))
+
+airline_delay <- cbind(name_df, airline_delay)
+
+airline_delay
+```
+
+```{r}
+airline_delay <- mod_jan_2023 |> 
+  group_by(OP_UNIQUE_CARRIER) |>
+  summarize(cum_dep_delay = sum(MOD_DEP_DELAY), 
+            n_flights = n(), 
+            avg_delay = cum_dep_delay / n_flights,
+            std_delay = sd(MOD_DEP_DELAY)) |>
+  arrange(desc(avg_delay))
+
+name_df <- data.frame(Airline = c("Frontier", "Allegiant", "Spirit", "Jet Blue", "American", "SkyWest", "United",
+  "Delta", "Endeavor", "Southwest", "Envoy", "Hawaiian", "Alaska", "PSA", "Republic"))
+
+airline_delay <- cbind(name_df, airline_delay)
+
+airline_delay
+```
+
+
+```{r}
+ggplot(data = mod_jan_2023, aes(x = OP_UNIQUE_CARRIER, fill = OP_UNIQUE_CARRIER)) +
+  geom_bar() +
+  xlab("Carrier") +
+  ylab("Count") +
+  labs(title = "Number of Flights by Airline")
+```
+
+```{r}
+ggplot(data = airline_delay, aes(y = Airline, x = avg_delay, fill = Airline)) + 
+  geom_bar(stat = "identity") +
+  geom_text(aes(x = avg_delay, y = Airline, label = round(avg_delay, digits = 3)), 
+            hjust = -0.01) +
+  scale_x_continuous(expand = expand_scale(mult = c(0, .1))) +
+  theme(legend.position = "none") +
+  xlab("Average Delay in Minutes") +
+  labs(title = "Average Delay in Minutes for each Reporting Airline")
+```
+
+```{r}
+ggplot(data = mod_jan_2023 |> filter(MOD_DEP_DELAY > 0), aes(x = MOD_DEP_DELAY)) +
+  geom_histogram() + 
+  facet_wrap(vars(OP_UNIQUE_CARRIER))
+```
+
+
+# Prediction
+
+```{r}
+more <- mod_jan_2023 |> 
+  arrange(YEAR, MONTH, DAY_OF_MONTH, DEP_TIME) |>
+  group_by(YEAR, MONTH, DAY_OF_MONTH, TAIL_NUM) |>
+  mutate(prev_delay = dplyr::lag(MOD_DEP_DELAY, n = 1)) |>
+  mutate(first_flight = if_else(is.na(prev_delay), 1, 0),
+         prev_delay_mod = if_else(is.na(prev_delay), 0, prev_delay))
+
+more
+```
+
+```{r}
+ggplot(data = more |> filter(!is.na(prev_delay)), 
+       aes(y = MOD_DEP_DELAY, x = prev_delay_mod)) +
+  geom_point(color = "#000080") +
+  xlab("Previous Depature Delay") +
+  ylab("Departure Delay") +
+  labs(title = "Previous Departure Delay vs Departure Delay")
+```
+
+```{r}
+ggplot(data = more |> filter(first_flight == 0), 
+       aes(y = MOD_DEP_DELAY, x = prev_delay_mod)) +
+  geom_point(color = "#000080") +
+  xlab("Previous Depature Delay") +
+  ylab("Departure Delay") +
+  labs(title = "Previous Departure Delay vs Departure Delay without First Flight")
+```
+
+```{r}
+airport_buckets <- more |> 
+  ungroup() |>
+  mutate(timebucket = floor(DEP_TIME/100),
+         combid = paste(DAY_OF_MONTH, ORIGIN, timebucket)) |>
+  group_by(DAY_OF_MONTH, ORIGIN, timebucket) |>
+  summarize (combid = combid, bucket_count = n(), avg_bucket_delay = mean(MOD_DEP_DELAY)) |>
+  distinct(combid, bucket_count, avg_bucket_delay) |>
+  select(combid, bucket_count, avg_bucket_delay)
+
+more2 <- more |>
+  ungroup() |>
+  mutate(timebucket = floor(DEP_TIME/100),
+         combid = paste(DAY_OF_MONTH, ORIGIN, timebucket))
+```
+
+```{r}
+airport_buckets
+more2
+```
+
+
+```{r}
+combined_bucket <- left_join(more2, airport_buckets)
+combined_bucket
+```
+
+```{r}
+more2 |> filter(DAY_OF_MONTH == 1, ORIGIN == "ATL", timebucket == 0)
+```
+
+```{r}
+ggplot(data = combined_bucket, aes(x = avg_bucket_delay, y = MOD_DEP_DELAY)) + 
+  geom_point(color = "#000080") +
+  xlab("Average Airport Delay during the Hour of a Flight") +
+  ylab("Departure Delay") +
+  labs(title = "Average Bucketed Airport Delay vs Departure Delay")
+```
+
+```{r}
+ggplot(data = combined_bucket, aes(x = bucket_count, y = MOD_DEP_DELAY)) + 
+  geom_point(color = "#000080") +
+  xlab("Number of Flights during the Hour of a Flight") +
+  ylab("Departure Delay") +
+  labs(title = "Number of Flights During the Hour of Departure vs Departure Delay")
+```
+
+```{r}
+final_predictors <- combined_bucket |> 
+  select(DAY_OF_MONTH, DAY_OF_WEEK, OP_UNIQUE_CARRIER, ORIGIN, DEST, DEP_DELAY, TAXI_OUT,
+         WHEELS_OFF, MOD_DEP_DELAY, first_flight, prev_delay_mod, timebucket, bucket_count,
+         avg_bucket_delay)
+```
+
+```{r}
+complete_simple_model <- lm(MOD_DEP_DELAY ~ DAY_OF_MONTH + DAY_OF_WEEK + OP_UNIQUE_CARRIER + ORIGIN + DEST + TAXI_OUT + WHEELS_OFF + first_flight + prev_delay_mod + timebucket + bucket_count + avg_bucket_delay, data = final_predictors)
+```
+
+```{r}
+summary(complete_simple_model)
+```
+
+```{r}
+abridged_simple_model <- lm(MOD_DEP_DELAY ~ DAY_OF_MONTH + DAY_OF_WEEK + OP_UNIQUE_CARRIER + TAXI_OUT + WHEELS_OFF + first_flight + prev_delay_mod + timebucket + bucket_count + avg_bucket_delay, data = final_predictors)
+```
+
+```{r}
+summary(abridged_simple_model)
+```
+
+```{r}
+simple_model_3 <- lm(MOD_DEP_DELAY ~ DAY_OF_MONTH + DAY_OF_WEEK + OP_UNIQUE_CARRIER + TAXI_OUT + WHEELS_OFF + first_flight + prev_delay_mod + timebucket, data = final_predictors)
+```
+
+```{r}
+summary(simple_model_3)
+```
+
+```{r}
+simple_model_4 <- lm(MOD_DEP_DELAY ~ (DAY_OF_MONTH + DAY_OF_WEEK + OP_UNIQUE_CARRIER + TAXI_OUT + WHEELS_OFF + first_flight + prev_delay_mod + timebucket + bucket_count + avg_bucket_delay)^2, data = final_predictors)
+```
+
+```{r}
+summary(simple_model_4)
+```
+
+```{r}
+ctrl <- trainControl(method = "cv", number = 10)
+trained_model <- train(MOD_DEP_DELAY ~ (DAY_OF_MONTH + DAY_OF_WEEK + OP_UNIQUE_CARRIER + TAXI_OUT + WHEELS_OFF + first_flight + prev_delay_mod + timebucket + bucket_count + avg_bucket_delay)^2, data = final_predictors, method = "lm", trControl = ctrl)
+summary(trained_model)
+```
+
+```{r}
+test <- final_predictors |> filter(MOD_DEP_DELAY < 100)
+```
+
+```{r}
+simple_model_5 <- lm(MOD_DEP_DELAY ~ (DAY_OF_MONTH + DAY_OF_WEEK + OP_UNIQUE_CARRIER + TAXI_OUT + WHEELS_OFF + first_flight + prev_delay_mod + timebucket + bucket_count + avg_bucket_delay)^2, data = test)
+```
+
+```{r}
+summary(simple_model_5)
+```
+
+```{r}
+test2 <- final_predictors |> filter(MOD_DEP_DELAY > 0)
+```
+
+```{r}
+simple_model_6 <- lm(MOD_DEP_DELAY ~ (DAY_OF_MONTH + DAY_OF_WEEK + OP_UNIQUE_CARRIER + TAXI_OUT + WHEELS_OFF + first_flight + prev_delay_mod + timebucket + bucket_count + avg_bucket_delay)^2, data = test2)
+```
+
+```{r}
+summary(simple_model_6)
+```
+
+```{r}
+rf <- randomForest(MOD_DEP_DELAY ~ DAY_OF_MONTH + DAY_OF_WEEK + OP_UNIQUE_CARRIER + TAXI_OUT + WHEELS_OFF + first_flight + prev_delay_mod + timebucket + bucket_count + avg_bucket_delay, data = final_predictors, ntree = 500, mtry = 5)
+```
+
+```{r}
+simple_model_log <- lm(log(MOD_DEP_DELAY) ~ (DAY_OF_MONTH + DAY_OF_WEEK + OP_UNIQUE_CARRIER + TAXI_OUT + WHEELS_OFF + first_flight + prev_delay_mod + timebucket + bucket_count + avg_bucket_delay)^2, data = final_predictors |> filter(MOD_DEP_DELAY > 0))
+```
+
+```{r}
+summary(simple_model_log)
+```
